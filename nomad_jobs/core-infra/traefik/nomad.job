@@ -71,6 +71,15 @@ job "traefik" {
     address = "127.0.0.1:8500"
     scheme = "http"
 
+[providers.file]
+  filename = "/local/dynamic.toml"
+  watch = true
+EOF
+        destination = "local/traefik.toml"
+      }
+
+      template {
+        data = <<EOF
 # Static routes for infrastructure dashboards
 [http.routers]
   [http.routers.nomad]
@@ -90,7 +99,7 @@ job "traefik" {
     [[http.services.consul.loadBalancer.servers]]
       url = "http://127.0.0.1:8500"
 EOF
-        destination = "local/traefik.toml"
+        destination = "local/dynamic.toml"
       }
 
       service {
