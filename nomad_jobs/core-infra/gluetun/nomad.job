@@ -5,14 +5,13 @@ job "gluetun" {
 
   meta {
     job_file = "nomad_jobs/core-infra/gluetun/nomad.job"
-    version  = "1"
+    version  = "2"
   }
 
   group "vpn" {
     count = 1
 
     network {
-      mode = "bridge"
       port "qbit" {
         static = 8085
         to     = 8085
@@ -33,6 +32,10 @@ job "gluetun" {
             container_path = "/dev/net/tun"
           }
         ]
+
+        sysctl = {
+          "net.ipv6.conf.all.disable_ipv6" = "1"
+        }
       }
 
       env {
@@ -44,6 +47,7 @@ job "gluetun" {
         TZ                   = "Europe/Copenhagen"
         HTTPPROXY            = "off"
         SHADOWSOCKS          = "off"
+        FIREWALL_INPUT_PORTS = "8085"
       }
 
       resources {
@@ -59,36 +63,6 @@ job "gluetun" {
           interval = "30s"
           timeout  = "5s"
         }
-      }
-    }
-
-    task "qbittorrent" {
-      driver = "docker"
-
-      lifecycle {
-        hook    = "poststart"
-        sidecar = true
-      }
-
-      config {
-        image        = "linuxserver/qbittorrent:latest"
-        network_mode = "container:${NOMAD_ALLOC_ID}-gluetun"
-        volumes = [
-          "/opt/nomad/config-volumes/qbittorrent:/config",
-          "/media/t7/downloads:/downloads",
-        ]
-      }
-
-      env {
-        PUID            = "1000"
-        PGID            = "1000"
-        TZ              = "Europe/Copenhagen"
-        WEBUI_PORT      = "8085"
-      }
-
-      resources {
-        cpu    = 500
-        memory = 512
       }
     }
   }
