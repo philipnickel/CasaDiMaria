@@ -33,6 +33,7 @@ job "traefik" {
         image        = "traefik:v3.2"
         ports        = ["http", "https", "admin"]
         network_mode = "host"
+        args         = ["--configFile=/local/traefik.toml"]
       }
 
       env {
@@ -65,7 +66,7 @@ job "traefik" {
 [providers.consulCatalog]
   exposedByDefault = false
   prefix = "traefik"
-  defaultRule = "Host(`{{ .Name }}.${var.tld}`)"
+  defaultRule = "Host(`{{ .Name }}.kni.dk`)"
   [providers.consulCatalog.endpoint]
     address = "127.0.0.1:8500"
     scheme = "http"
@@ -73,11 +74,11 @@ job "traefik" {
 # Static routes for infrastructure dashboards
 [http.routers]
   [http.routers.nomad]
-    rule = "Host(`nomad.${var.tld}`)"
+    rule = "Host(`nomad.kni.dk`)"
     entrypoints = ["web"]
     service = "nomad"
   [http.routers.consul]
-    rule = "Host(`consul.${var.tld}`)"
+    rule = "Host(`consul.kni.dk`)"
     entrypoints = ["web"]
     service = "consul"
 
