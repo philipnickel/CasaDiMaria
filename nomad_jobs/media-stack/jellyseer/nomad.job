@@ -58,6 +58,9 @@ job "jellyseer" {
         name = "jellyseer"
         tags = [
           "traefik.enable=true",
+          "traefik.http.routers.jellyseer.rule=Host(`jellyseer.kni.dk`)",
+          "traefik.http.routers.jellyseer.entrypoints=web",
+          "traefik.http.services.jellyseer.loadbalancer.server.port=5055",
         ]
         check {
           type     = "http"

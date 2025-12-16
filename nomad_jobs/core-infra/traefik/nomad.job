@@ -1,184 +1,96 @@
 job "traefik" {
-  region = var.region
+  region      = var.region
   datacenters = ["dc1"]
-  type = "service"
+  type        = "service"
+
   meta {
-      job_file = "nomad_jobs/core-infra/traefik/nomad.job"
-version = "6" // Fixed Let's Encrypt certificate resolver configuration
+    job_file = "nomad_jobs/core-infra/traefik/nomad.job"
+    version  = "1"
   }
 
-  group "lbs" {
+  group "traefik" {
     count = 1
-    
-    constraint {
-      attribute = "${attr.unique.network.ip-address}"
-      operator  = "="
-      value     = "${var.ingress_ip}"
-    }
+
     network {
       port "http" {
-        host_network = "lan"
-        static = "80"
+        static = 80
+        to     = 80
+      }
+      port "https" {
+        static = 443
+        to     = 443
       }
       port "admin" {
-        static = "9002"
+        static = 8080
+        to     = 8080
       }
     }
 
-    update {
-      max_parallel     = 1
-      min_healthy_time = "30s"
-      auto_revert      = true
-    }
-    
     task "traefik" {
       driver = "docker"
-      service {
-        name = "traefik-web"
-        port = "http"
+
+      config {
+        image        = "traefik:v3.2"
+        ports        = ["http", "https", "admin"]
+        network_mode = "host"
       }
+
+      env {
+        # Traefik will auto-discover from Consul
+      }
+
+      template {
+        data = <<EOF
+[global]
+  checkNewVersion = false
+  sendAnonymousUsage = false
+
+[api]
+  dashboard = true
+  insecure = true
+
+[ping]
+
+[log]
+  level = "INFO"
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+  [entryPoints.websecure]
+    address = ":443"
+  [entryPoints.traefik]
+    address = ":8080"
+
+[providers.consulCatalog]
+  exposedByDefault = false
+  prefix = "traefik"
+  defaultRule = "Host(`{{ .Name }}.${var.tld}`)"
+  [providers.consulCatalog.endpoint]
+    address = "127.0.0.1:8500"
+    scheme = "http"
+EOF
+        destination = "local/traefik.toml"
+      }
+
       service {
         name = "traefik"
         port = "admin"
         tags = [
-          "metrics"
+          "traefik.enable=true",
+          "traefik.http.routers.dashboard.rule=Host(`traefik.${var.tld}`)",
+          "traefik.http.routers.dashboard.service=api@internal",
         ]
         check {
-          type     = "tcp"
+          type     = "http"
+          path     = "/ping"
           interval = "10s"
           timeout  = "2s"
         }
       }
 
-      config {
-        image = "traefik:v3.6"
-        ports = ["http", "admin"]
-        network_mode = "host"
-        volumes = [
-          "local/traefik.toml:/etc/traefik/traefik.toml",
-          "${var.shared_dir}traefik-ingress/acme.json:/acme.json",
-          "${var.shared_dir}traefik-ingress:/etc/traefik/dynamic"
-        ]
-      }
-
-      template {
-data = <<EOH
-[global]
-  checkNewVersion = false
-  sendAnonymousUsage = false
-
-[metrics]
-  [metrics.prometheus]
-
-[entryPoints]
-  [entryPoints.web]
-    address = ":80"
-    [entryPoints.web.http.redirections.entryPoint]
-      to = "websecure"
-      scheme = "https"
-
-  [entryPoints.websecure]
-    address = ":443"
-    [entryPoints.websecure.http]
-        middlewares=["home-ip-whitelist@file"]
-    [entryPoints.websecure.http.tls]
-      certResolver = "letsencrypt"
-
-  [entryPoints.traefik]
-    address = ":9002"
-
-[tls.options]
-  [tls.options.TLSOptions]
-    minVersion = "VersionTLS12"
-    sniStrict = true
-
-[accessLog]
-  format = "json"
-
-[log]
-
-[api]
-  dashboard = true
-  insecure = false  # Changed to false for security
-
-[ping]
-
-[providers.consulcatalog]
-  exposedByDefault = false
-  prefix = "traefik"
-  defaultRule = "Host(`{{ .Name }}.${var.tld}`)"
-
-  [providers.consulcatalog.endpoint]
-    address = "{{{ env "NOMAD_IP_http" }}}:8500"
-    scheme = "http"
-    datacenter = "homelab"
-    endpointWaitTime = "15s"
-
-[certificatesResolvers.letsencrypt.acme]
-  email = "me@you.com"
-  storage = "acme.json"
-  [certificatesResolvers.letsencrypt.acme.httpChallenge]
-    entryPoint = "web"
-
-[providers.file]
-  directory = "/etc/traefik/dynamic"
-  watch = true
-EOH
-        destination = "local/traefik.toml"
-        env         = false
-        change_mode = "noop"
-        left_delimiter = "{{{"
-        right_delimiter = "}}}"
-      }
-
-      template {
-data = <<EOH
-[http.middlewares]
-  [http.middlewares.allow-letsencrypt-ip.ipWhiteList]
-    sourceRange = ["66.133.109.36/32", "66.133.109.35/32", "172.65.32.248/32"]  # Let's Encrypt IPs
-
-  [http.middlewares.allow-local-network.ipWhiteList]
-    sourceRange = ["192.168.50.0/24", "10.0.0.0/16"]  # Local network only - dynamic IP from file
-
-  [http.middlewares.deny-all.ipWhiteList]
-    sourceRange = ["127.0.0.1/32"]  # Blocks everything except localhost
-
-  [http.middlewares.basic-auth.basicAuth]
-    users = [
-      "admin:$apr1$Ht8D2P1z$7QOq2s8xKUomI1cM.rFJX/" # Replace with an htpasswd-generated hash
-    ]
-    realm = "Restricted Area"
-
-
-  [http.middlewares.ip-or-auth.chain]
-    middlewares = ["home-ip-whitelist@file", "allow-local-network", "basic-auth"]
-
-[http.routers]
-  [http.routers.http-certs]
-    entryPoints = ["web"]
-    rule = "PathPrefix(`/.well-known/acme-challenge/`)"
-    middlewares = ["allow-letsencrypt-ip"]
-    service = "noop"
-
-  [http.routers.https-local]
-    entryPoints = ["websecure"]
-    rule = "HostRegexp(`{any:.+}`)"  # Matches any domain
-    middlewares = ["home-ip-whitelist@file"]
-    service = "beefcake"
-    [http.routers.https-local.tls]
-
-[http.services]
-  [http.services.beefcake.loadBalancer]
-    [[http.services.beefcake.loadBalancer.servers]]
-      url = "http://192.168.50.208:80"
-EOH
-        destination = "/etc/traefik/dynamic/static-config.toml"
-        env         = false
-        change_mode = "noop"
-      }
-
       resources {
-        cpu = 100
+        cpu    = 200
         memory = 256
       }
     }
@@ -186,17 +98,10 @@ EOH
 }
 
 variable "region" {
-    type = string
+  type = string
 }
 
 variable "tld" {
-    type = string
-}
-
-variable "shared_dir" {
-    type = string
-}
-
-variable "ingress_ip" {
-    type = string
+  type    = string
+  default = "kni.dk"
 }
