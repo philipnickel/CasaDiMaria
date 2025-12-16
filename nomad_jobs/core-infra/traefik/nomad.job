@@ -69,6 +69,25 @@ job "traefik" {
   [providers.consulCatalog.endpoint]
     address = "127.0.0.1:8500"
     scheme = "http"
+
+# Static routes for infrastructure dashboards
+[http.routers]
+  [http.routers.nomad]
+    rule = "Host(`nomad.${var.tld}`)"
+    entrypoints = ["web"]
+    service = "nomad"
+  [http.routers.consul]
+    rule = "Host(`consul.${var.tld}`)"
+    entrypoints = ["web"]
+    service = "consul"
+
+[http.services]
+  [http.services.nomad.loadBalancer]
+    [[http.services.nomad.loadBalancer.servers]]
+      url = "http://127.0.0.1:4646"
+  [http.services.consul.loadBalancer]
+    [[http.services.consul.loadBalancer.servers]]
+      url = "http://127.0.0.1:8500"
 EOF
         destination = "local/traefik.toml"
       }
