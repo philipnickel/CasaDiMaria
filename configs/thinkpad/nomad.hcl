@@ -1,6 +1,6 @@
 datacenter = "dc1"
 data_dir   = "/opt/nomad/data"
-bind_addr  = "0.0.0.0"
+bind_addr  = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
 region     = "home"
 
 server {
@@ -35,7 +35,7 @@ client {
   }
 
   host_network "lan" {
-    cidr = "192.168.0.0/16"
+    cidr = "192.168.1.0/24"
   }
 }
 
