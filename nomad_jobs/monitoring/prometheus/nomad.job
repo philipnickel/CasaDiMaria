@@ -1,0 +1,393 @@
+job "prometheus" {
+  region      = var.region
+  datacenters = ["dc1"]
+  type        = "service"
+
+  meta {
+    job_file = "nomad_jobs/observability/prometheus/nomad.job"
+    version = "10"
+  }
+
+  constraint {
+    attribute = "${meta.shared_mount}"
+    operator  = "="
+    value     = "true"
+  }
+
+  group "monitoring" {
+    count = 1
+
+    network {
+      port "http" {
+        static = "9090"
+      }
+    }
+
+    volume "prometheus" {
+      type      = "csi"
+      read_only = false
+      source    = "prometheus"
+      access_mode = "multi-node-single-writer"
+      attachment_mode = "file-system"
+    }
+
+
+    task "prep-disk" {
+      driver = "docker"
+      volume_mount {
+        volume      = "prometheus"
+        destination = "/volume/"
+        read_only   = false
+      }
+      config {
+        image        = "busybox:latest"
+        command      = "sh"
+        args         = ["-c", "chown -R 1000:2000 /volume/"]
+      }
+      resources {
+        cpu    = 200
+        memory = 128
+      }
+
+      lifecycle {
+        hook    = "prestart"
+        sidecar = false
+      }
+    }
+
+
+    update {
+      max_parallel     = 1
+      min_healthy_time = "30s"
+      healthy_deadline = "5m"
+      progress_deadline = "10m"
+      auto_revert      = true
+    }
+
+    task "prometheus" {
+      driver = "docker"
+      user = "1000:2000"
+
+      volume_mount {
+        volume      = "prometheus"
+        destination = "/opt/prometheus"
+        read_only   = false
+      }
+
+      service {
+        name = "prometheus"
+        port = "http"
+        tags = [
+          "traefik.enable=true"
+        ]
+
+        check {
+          type     = "http"
+          path     = "/-/healthy"
+          name     = "http"
+          interval = "5s"
+          timeout  = "2s"
+        }
+      }
+
+      # main configuration file
+      template {
+        data = <<EOH
+global:
+  scrape_interval:     60s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 60s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+       - alertmanager.service.consul:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  - "alerts.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'metrics'
+    scrape_interval: 5s
+    metrics_path: /metrics
+    consul_sd_configs:
+      - server: '{{ env "NOMAD_IP_http" }}:8500'
+        tags: ['metrics']
+        scheme: http
+    relabel_configs:
+      - source_labels: ['__meta_consul_dc']
+        target_label:  'dc'
+      - source_labels: [__meta_consul_service]
+        target_label:  'job'
+      - source_labels: ['__meta_consul_node']
+        target_label:  'host'
+      - source_labels: ['__meta_consul_tags']
+        target_label: 'tags'
+      - source_labels: ['__meta_consul_tags']
+        regex: '.*job-(.*?)(,.*)'
+        replacement: '${1}'
+        target_label: 'job_name'
+
+  - job_name: 'consul-server'
+    scrape_interval: 10s
+    metrics_path: /v1/agent/metrics
+    honor_labels: true
+    params:
+      format: ['prometheus']
+    consul_sd_configs:
+      - server: '{{ env "NOMAD_IP_http" }}:8500'
+        services: ['nomad-client']
+        scheme: http
+    relabel_configs:
+      - source_labels: ['__meta_consul_dc']
+        target_label:  'dc'
+      - source_labels: ['__meta_consul_node']
+        target_label:  'host'
+      - source_labels: ['__meta_consul_tags']
+        target_label: 'tags'
+      - source_labels: [__address__]
+        action: replace
+        regex: ([^:]+):.*
+        replacement: $1:8500
+        target_label: __address__
+
+  - job_name: 'hass'
+    scrape_interval: 60s
+    metrics_path: /api/prometheus
+
+    # Long-Lived Access Token
+    authorization:
+      credentials: ${var.hass_key}
+
+    scheme: http
+    static_configs:
+      - targets: ['${var.hass_ip}:8123']
+
+  - job_name: 'nomad'
+    consul_sd_configs:
+    - server: '{{ env "NOMAD_IP_http" }}:8500'
+      services: ['nomad-client']
+      tags: ['http']
+      scheme: http
+    scrape_interval: 10s
+    metrics_path: /v1/metrics
+    params:
+      format: ['prometheus']
+    relabel_configs:
+      - source_labels: ['__meta_consul_dc']
+        target_label:  'dc'
+      - source_labels: [__meta_consul_service]
+        target_label:  'job'
+      - source_labels: ['__meta_consul_node']
+        target_label:  'host'
+
+#  - job_name: 'blackbox_http_2xx'
+#    metrics_path: /probe
+#    scheme: http
+#    scrape_interval: 30s
+#    scrape_timeout: 10s
+#    params:
+#      module: [ http_2xx ]
+#    static_configs:
+#      - targets:
+#        - https://www.google.com/
+#        - http://prometheus.homelab/
+#    relabel_configs:
+#      - source_labels: ['__address__']
+#        regex: 'https?://(.+?)(/.*)'
+#        replacement: '${1}'
+#        target_label: 'url'
+#      - source_labels: ['__param_target']
+#        target_label: 'instance'
+#      - source_labels: [__address__]
+#        target_label: __param_target
+#      - target_label: __address__
+#        replacement: blackbox-exporter.service.[[ .region ]]:9115
+#      - source_labels: ['__param_target']
+#        target_label: 'endpoint'
+#
+#  - job_name: 'dns_google_com' 
+#    metrics_path: /probe   
+#    params:                
+#      module: [dns_google_com]                                                                 
+#    static_configs:        
+#      - targets:           
+#        - 8.8.8.8
+#        - 1.1.1.1
+#        labels:                            
+#          dc: '[[ .datacenter ]]'        
+#          region: '[[ .region ]]'        
+#    relabel_configs:       
+#      - source_labels: [__address__] 
+#        target_label: __param_target 
+#      - source_labels: [__param_target] 
+#        target_label: instance 
+#      - target_label: __address__ 
+#        replacement: blackbox-exporter.service.[[ .region ]]:9115
+
+EOH
+
+        destination   = "local/prometheus.yml"
+        change_mode   = "signal"
+        change_signal = "SIGHUP"
+        env           = false
+      }
+
+      template {
+        change_mode = "noop"
+        destination = "local/alerts.yml"
+        left_delimiter = "[["
+        right_delimiter = "]]"
+        data = <<EOH
+---
+groups:
+- name: basic_alerts
+  rules:
+  - alert: PrometheusDown
+    expr: absent(up{job="prometheus"})
+    for: 2m
+    labels:
+      severity: page
+      alertname: "PrometheusDown"
+    annotations:
+      summary: "Prometheus is down"
+      description: "Prometheus has been down for more than 2 minutes"
+      service: "prometheus"
+      
+  - alert: NomadClusterDown
+    expr: absent(up{job="nomad-client"})
+    for: 2m
+    labels:
+      severity: page
+      alertname: "NomadClusterDown"
+    annotations:
+      summary: "Nomad cluster is unreachable"
+      description: "No Nomad metrics available - cluster may be down"
+      service: "nomad"
+  # Alert for any instance that is unreachable for >5 minutes.
+  - alert: InstanceDown
+    expr: up == 0
+    for: 5m
+    labels:
+      severity: page
+    annotations:
+      summary: "Instance {{ $labels.instance }} down"
+      description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 5 minutes."
+  # Alert for any device that is over 80% capacity  
+  - alert: DiskUsage
+    expr: avg(disk_used_percent) by (host, device) > 80
+    for: 5m
+    labels:
+      severity: page
+    annotations:
+      summary: "Host {{ $labels.host }} disk {{ $labels.device }} usage alert"
+      description: "{{ $labels.host }} is using over 80% of its device: {{ $labels.device }}"
+
+- name: nomad_allocation_alerts
+  rules:
+  - alert: NomadJobFailureRate
+    expr: rate(nomad_nomad_job_summary_failed[5m]) > 0
+    for: 2m
+    labels:
+      severity: critical
+      alertname: "NomadJobFailureRate"
+    annotations:
+      summary: "Nomad job {{ $labels.exported_job }} is experiencing failures"
+      description: "Job {{ $labels.exported_job }} is failing allocations at a rate of {{ $value | printf \"%.2f\" }} per second"
+      service: "nomad"
+      
+  - alert: NomadJobLostRate
+    expr: rate(nomad_nomad_job_summary_lost[5m]) > 0
+    for: 2m
+    labels:
+      severity: warning
+      alertname: "NomadJobLostRate"
+    annotations:
+      summary: "Nomad job {{ $labels.exported_job }} is losing allocations"
+      description: "Job {{ $labels.exported_job }} is losing allocations at a rate of {{ $value | printf \"%.2f\" }} per second"
+      service: "nomad"
+      
+  - alert: NomadJobQueued
+    expr: nomad_nomad_job_summary_queued > 0
+    for: 5m
+    labels:
+      severity: warning
+      alertname: "NomadJobQueued"
+    annotations:
+      summary: "Nomad job {{ $labels.exported_job }} has queued allocations"
+      description: "Job {{ $labels.exported_job }} has {{ $value }} allocations queued for over 5 minutes"
+      service: "nomad"
+      
+  - alert: NomadAllocationsRestarting
+    expr: rate(nomad_client_allocs_restart[5m]) > 0.1
+    for: 2m
+    labels:
+      severity: warning
+      alertname: "NomadAllocationsRestarting"
+    annotations:
+      summary: "High allocation restart rate on {{ $labels.host }}"
+      description: "Allocation restart rate is {{ $value }} per second on {{ $labels.host }}"
+      service: "nomad"
+      
+  - alert: NomadAllocationsOOMKilled
+    expr: increase(nomad_client_allocs_oom_killed[5m]) > 0
+    for: 0s
+    labels:
+      severity: critical
+      alertname: "NomadAllocationsOOMKilled"
+    annotations:
+      summary: "Allocation killed due to OOM on {{ $labels.host }}"
+      description: "{{ $value }} allocations were killed due to out-of-memory on {{ $labels.host }}"
+      service: "nomad"
+      
+  - alert: NomadHighMemoryUsage
+    expr: (nomad_client_allocs_memory_usage / nomad_client_allocs_memory_allocated) * 100 > 90
+    for: 5m
+    labels:
+      severity: warning
+      alertname: "NomadHighMemoryUsage"
+    annotations:
+      summary: "High memory usage for allocation {{ $labels.alloc }}"
+      description: "Allocation {{ $labels.alloc }} is using {{ $value }}% of allocated memory"
+      service: "nomad"
+
+EOH
+      }
+
+
+      config {
+        image = "prom/prometheus:v3.7.3"
+        network_mode = "host"
+        args = ["--storage.tsdb.path", "/opt/prometheus", "--web.listen-address", "0.0.0.0:9090", "--storage.tsdb.retention.time", "90d"]
+        force_pull = true
+        ports = ["http"]
+        dns_servers = ["192.168.50.2"]
+        volumes = [
+          "local/alerts.yml:/prometheus/alerts.yml",
+          "local/prometheus.yml:/prometheus/prometheus.yml",
+        ]
+      }
+
+      resources {
+        cpu    = 1000
+        memory = 512
+      }
+    }
+  }
+}
+
+
+
+variable "region" {}
+variable "tld" {}
+variable "shared_dir" {}
+variable "hass_key" {}
+variable "hass_ip" {}

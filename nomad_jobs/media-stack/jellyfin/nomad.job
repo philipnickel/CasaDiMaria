@@ -1,0 +1,91 @@
+job "jellyfin" {
+  region      = var.region
+  datacenters = ["dc1"]
+  type        = "service"
+
+  meta {
+    job_file = "nomad_jobs/media-stack/jellyfin/nomad.job"
+    version  = "1"
+  }
+
+  constraint {
+    attribute = "${meta.shared_mount}"
+    operator  = "="
+    value     = "true"
+  }
+
+  group "jellyfin" {
+    count = 1
+
+    network {
+      port "http" {
+        static = 8096
+        to     = 8096
+      }
+    }
+
+    volume "config" {
+      type      = "host"
+      source    = "config"
+      read_only = false
+    }
+
+    volume "media" {
+      type      = "host"
+      source    = "media"
+      read_only = true
+    }
+
+    update {
+      max_parallel     = 1
+      min_healthy_time = "30s"
+      auto_revert      = true
+    }
+
+    task "jellyfin" {
+      driver = "docker"
+
+      config {
+        image = "jellyfin/jellyfin:latest"
+        ports = ["http"]
+      }
+
+      volume_mount {
+        volume      = "config"
+        destination = "/config"
+      }
+
+      volume_mount {
+        volume      = "media"
+        destination = "/media"
+      }
+
+      env {
+        JELLYFIN_PublishedServerUrl = "http://jellyfin.service.consul:8096"
+      }
+
+      service {
+        port = "http"
+        name = "jellyfin"
+        tags = [
+          "traefik.enable=true",
+        ]
+        check {
+          type     = "http"
+          path     = "/health"
+          interval = "30s"
+          timeout  = "5s"
+        }
+      }
+
+      resources {
+        cpu    = 2000
+        memory = 2048
+      }
+    }
+  }
+}
+
+variable "region" {
+  type = string
+}

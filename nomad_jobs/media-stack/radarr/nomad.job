@@ -1,0 +1,122 @@
+job "radarr" {
+  region = var.region
+  datacenters = ["dc1"]
+  type        = "service"
+
+  meta {
+      job_file = "nomad_jobs/media-stack/radarr/nomad.job"
+version = "8"  // Incremented version number
+  }
+
+  group "downloaders" {
+    count = 1 
+    network {
+      port "http" {
+        host_network = "lan"
+        to = "7878"
+      }
+    }
+
+    volume "radarr" {
+      type      = "csi"
+      read_only = false
+      source    = "radarr2"
+      access_mode = "single-node-writer"
+      attachment_mode = "file-system"
+    }
+
+
+    update {
+      max_parallel     = 1
+      min_healthy_time = "30s"
+      auto_revert      = true
+    }
+
+    task "radarr" {
+      driver = "docker"
+      config {
+        image = "linuxserver/radarr:5.28.0"
+        dns_servers = ["192.168.50.2"]
+        ports = ["http"]
+        volumes = [
+          "${var.downloads_dir}:/media/Movies",
+          "${var.movies_dir}:/movies",
+          "local/config.xml:/config/config.xml",
+        ]
+      }
+
+      volume_mount {
+        volume      = "radarr"
+        destination = "/config"
+        read_only   = false
+      }
+
+      env {
+        UMASK_SET = "022"
+        TZ        = "UTC"
+        PGUID     = "65534"
+        PGID      = "65534"
+      }
+
+      template {
+        data = <<EOH
+<Config>
+  <PostgresUser>postgres</PostgresUser>
+  <PostgresPassword>${var.postgres_pass}</PostgresPassword>
+  <PostgresPort>5432</PostgresPort>
+  <PostgresHost>postgres.service.consul</PostgresHost>
+  <PostgresMainDb>radarr_main</PostgresMainDb>
+  <PostgresLogDb>radarr_logs</PostgresLogDb>
+</Config>
+EOH
+        destination = "local/config.xml"
+        perms = "644"
+      }
+      
+      service {
+        port = "http"
+        name = "radarr"
+        tags = [
+          "traefik.enable=true",
+          "traefik.http.routers.${NOMAD_TASK_NAME}.tls.domains[0].sans=${NOMAD_TASK_NAME}.${var.tld}",
+        ]
+        check {
+          type     = "http"
+          path     = "/"
+          interval = "10s"
+          timeout  = "2s"
+        }
+      }
+
+      resources {
+        cpu    = 1000
+        memory = 512
+      }
+    }
+  }
+}
+
+variable "region" {
+    type = string
+}
+
+variable "tld" {
+    type = string
+}
+
+variable "downloads_dir" {
+    type = string
+}
+
+variable "tv_dir" {
+    type = string
+}
+
+variable "movies_dir" {
+    type = string
+}
+
+variable "postgres_pass" {
+    type = string
+    description = "Admin password for PostgreSQL"
+}
