@@ -69,7 +69,7 @@ job "jellyfin" {
         name = "jellyfin"
         tags = [
           "traefik.enable=true",
-          "traefik.http.routers.jellyfin.rule=Host(`jellyfin.kni.dk`)",
+          "traefik.http.routers.jellyfin.rule=Host(`jelly.kni.dk`)",
           "traefik.http.routers.jellyfin.entrypoints=web",
           "traefik.http.services.jellyfin.loadbalancer.server.port=8096",
         ]
