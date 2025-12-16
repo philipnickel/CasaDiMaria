@@ -4,9 +4,9 @@ bind_addr  = "0.0.0.0"
 region     = "home"
 
 advertise {
-  http = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
-  rpc  = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
-  serf = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
+  http = "{{ GetPrivateIP }}"
+  rpc  = "{{ GetPrivateIP }}"
+  serf = "{{ GetPrivateIP }}"
 }
 
 server {
@@ -41,7 +41,7 @@ client {
   }
 
   host_network "lan" {
-    cidr = "192.168.1.0/24"
+    cidr = "192.168.0.0/16"
   }
 }
 

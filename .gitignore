@@ -1,0 +1,6 @@
+# Environment files with secrets/machine-specific config
+.envrc
+*.env
+
+# Local overrides
+configs/**/local.hcl
