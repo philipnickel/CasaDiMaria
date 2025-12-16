@@ -90,6 +90,10 @@ EOF
     rule = "Host(`consul.kni.dk`)"
     entrypoints = ["web"]
     service = "consul"
+  [http.routers.qbit]
+    rule = "Host(`qbit.kni.dk`)"
+    entrypoints = ["web"]
+    service = "qbit"
 
 [http.services]
   [http.services.nomad.loadBalancer]
@@ -98,6 +102,9 @@ EOF
   [http.services.consul.loadBalancer]
     [[http.services.consul.loadBalancer.servers]]
       url = "http://127.0.0.1:8500"
+  [http.services.qbit.loadBalancer]
+    [[http.services.qbit.loadBalancer.servers]]
+      url = "http://127.0.0.1:8085"
 EOF
         destination = "local/dynamic.toml"
       }

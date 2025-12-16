@@ -1,0 +1,109 @@
+job "gluetun" {
+  region      = var.region
+  datacenters = ["dc1"]
+  type        = "service"
+
+  meta {
+    job_file = "nomad_jobs/core-infra/gluetun/nomad.job"
+    version  = "1"
+  }
+
+  group "vpn" {
+    count = 1
+
+    network {
+      mode = "bridge"
+      port "qbit" {
+        static = 8085
+        to     = 8085
+      }
+    }
+
+    task "gluetun" {
+      driver = "docker"
+
+      config {
+        image = "qmcgaw/gluetun:latest"
+        ports = ["qbit"]
+
+        cap_add = ["NET_ADMIN"]
+        devices = [
+          {
+            host_path      = "/dev/net/tun"
+            container_path = "/dev/net/tun"
+          }
+        ]
+      }
+
+      env {
+        VPN_SERVICE_PROVIDER = "protonvpn"
+        VPN_TYPE             = "openvpn"
+        OPENVPN_USER         = var.proton_user
+        OPENVPN_PASSWORD     = var.proton_pass
+        SERVER_COUNTRIES     = "Netherlands"
+        TZ                   = "Europe/Copenhagen"
+        HTTPPROXY            = "off"
+        SHADOWSOCKS          = "off"
+      }
+
+      resources {
+        cpu    = 200
+        memory = 256
+      }
+
+      service {
+        name = "gluetun"
+        port = "qbit"
+        check {
+          type     = "tcp"
+          interval = "30s"
+          timeout  = "5s"
+        }
+      }
+    }
+
+    task "qbittorrent" {
+      driver = "docker"
+
+      lifecycle {
+        hook    = "poststart"
+        sidecar = true
+      }
+
+      config {
+        image        = "linuxserver/qbittorrent:latest"
+        network_mode = "container:${NOMAD_ALLOC_ID}-gluetun"
+        volumes = [
+          "/opt/nomad/config-volumes/qbittorrent:/config",
+          "/media/t7/downloads:/downloads",
+        ]
+      }
+
+      env {
+        PUID            = "1000"
+        PGID            = "1000"
+        TZ              = "Europe/Copenhagen"
+        WEBUI_PORT      = "8085"
+      }
+
+      resources {
+        cpu    = 500
+        memory = 512
+      }
+    }
+  }
+}
+
+variable "region" {
+  type = string
+}
+
+variable "proton_user" {
+  type        = string
+  description = "ProtonVPN OpenVPN username"
+}
+
+variable "proton_pass" {
+  type        = string
+  description = "ProtonVPN OpenVPN password"
+}
