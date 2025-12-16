@@ -1,7 +1,13 @@
 datacenter = "dc1"
 data_dir   = "/opt/nomad/data"
-bind_addr  = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
+bind_addr  = "0.0.0.0"
 region     = "home"
+
+advertise {
+  http = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
+  rpc  = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
+  serf = "{{ GetInterfaceIP \"wlp0s20f3\" }}"
+}
 
 server {
   enabled          = true
