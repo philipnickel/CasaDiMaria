@@ -17,6 +17,12 @@ server {
 client {
   enabled = true
 
+  options {
+    docker.privileged.enabled = "true"
+    driver.raw_exec.enable    = "1"
+    docker.volumes.enabled    = "true"
+  }
+
   host_volume "media" {
     path      = "/media/t7/media"
     read_only = false
@@ -47,6 +53,7 @@ client {
 
 plugin "docker" {
   config {
+    allow_caps = ["CHOWN", "DAC_OVERRIDE", "FSETID", "FOWNER", "MKNOD", "NET_RAW", "SETGID", "SETUID", "SETFCAP", "SETPCAP", "NET_BIND_SERVICE", "SYS_CHROOT", "KILL", "AUDIT_WRITE", "NET_ADMIN", "NET_BROADCAST", "SYS_MODULE"]
     allow_privileged = true
     volumes {
       enabled = true
